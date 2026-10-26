@@ -1,0 +1,168 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Moradia acessível em contêineres – modelo 3D</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f2f2ee;--ink:#141414;--mid:#6b6b66;--line:#141414;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1c1c;--ink:#f0f0ea;--mid:#a3a39c;--line:#f0f0ea}}
+:root[data-theme="dark"]{--bg:#1b1c1c;--ink:#f0f0ea;--mid:#a3a39c;--line:#f0f0ea}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.45 Barlow,"Helvetica Neue",Arial,sans-serif;overflow:hidden}
+canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+.info{position:fixed;left:16px;top:calc(12px + env(safe-area-inset-top,0px));max-width:340px;pointer-events:none}
+h1{font:600 26px/1.05 "Barlow Condensed","Arial Narrow",sans-serif;margin:0 0 6px;letter-spacing:.2px}
+.info p{margin:0 0 3px;color:var(--mid)}
+.info b{color:var(--ink);font-weight:500}
+.bar{position:fixed;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:center;padding:0 12px}
+.grp{display:flex;border:1.5px solid var(--line)}
+button{font:500 14px Barlow,Arial,sans-serif;background:transparent;color:var(--ink);border:0;padding:9px 14px;cursor:pointer}
+.grp button+button{border-left:1.5px solid var(--line)}
+button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
+button:focus-visible{outline:3px solid var(--mid);outline-offset:-3px}
+button:disabled{opacity:.35;cursor:default}
+.tg{border:1.5px solid var(--line)}
+</style>
+<canvas id="cv" aria-label="Modelo 3D interativo: arraste para girar, role para aproximar"></canvas>
+<div class="info"><h1 id="t"></h1><p id="d1"></p><p id="d2"></p><p id="d3"></p></div>
+<div class="bar">
+ <div class="grp" id="modes">
+  <button data-m="A" aria-pressed="true">Versão A · lado a lado</button>
+  <button data-m="B" aria-pressed="false">Versão B · empilhados</button>
+  <button data-m="AB" aria-pressed="false">Comparar</button>
+ </div>
+ <button class="tg" id="tin" aria-pressed="false">Ver por dentro</button>
+ <button class="tg" id="tex" aria-pressed="false">Afastar pavimentos</button>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const L=6.058,DD=2.438,HC=2.591,PIL=.3,T=.1;
+const cs=getComputedStyle(document.documentElement);
+const cv=document.getElementById('cv');
+const R_=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+R_.setPixelRatio(Math.min(devicePixelRatio,2));R_.shadowMap.enabled=true;R_.shadowMap.type=THREE.PCFSoftShadowMap;
+const sc=new THREE.Scene(),cam=new THREE.PerspectiveCamera(35,1,.1,200);
+function bg(){sc.background=new THREE.Color(cs.getPropertyValue('--bg').trim()||'#f2f2ee');}
+bg();matchMedia('(prefers-color-scheme:dark)').addEventListener('change',()=>setTimeout(bg,50));
+sc.add(new THREE.HemisphereLight(0xffffff,0x8a8a86,.85));
+const sun=new THREE.DirectionalLight(0xffffff,.75);sun.position.set(9,18,12);sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-16,right:16,top:16,bottom:-16,near:1,far:60});sc.add(sun);
+const gr=new THREE.Mesh(new THREE.PlaneGeometry(90,90),new THREE.ShadowMaterial({opacity:.22}));gr.rotation.x=-Math.PI/2;gr.receiveShadow=true;sc.add(gr);
+const grid=new THREE.GridHelper(60,60,0x888888,0x888888);grid.material.transparent=true;grid.material.opacity=.18;sc.add(grid);
+
+const shellM=new THREE.MeshStandardMaterial({color:0xecebe6,roughness:.9,transparent:true,polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1});
+const wallM=new THREE.MeshStandardMaterial({color:0xffffff,roughness:1}),furM=new THREE.MeshStandardMaterial({color:0xb9b9b4,roughness:1});
+const floorM=new THREE.MeshStandardMaterial({color:0xd6d5d0,roughness:1}),darkM=new THREE.MeshStandardMaterial({color:0x161616,roughness:.6});
+const doorM=new THREE.MeshStandardMaterial({color:0x4a4a48,roughness:.7}),glassM=new THREE.MeshStandardMaterial({color:0x202428,roughness:.2,metalness:.3});
+const lineM=new THREE.LineBasicMaterial({color:0x111111}),ribM=new THREE.LineBasicMaterial({color:0x8a8a85});
+
+function bx(g,x0,x1,y0,y1,h0,h1,m,edge=true){
+ const s=new THREE.Mesh(new THREE.BoxGeometry(x1-x0,h1-h0,y1-y0),m);
+ s.position.set((x0+x1)/2,(h0+h1)/2,-(y0+y1)/2);s.castShadow=s.receiveShadow=true;g.add(s);
+ if(edge){const e=new THREE.LineSegments(new THREE.EdgesGeometry(s.geometry),lineM);e.position.copy(s.position);g.add(e);}
+ return s;}
+function rod(g,a,b,r=.025){
+ const A=new THREE.Vector3(...a),B=new THREE.Vector3(...b),d=B.clone().sub(A),n=d.length();
+ const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,n,6),darkM);
+ m.position.copy(A).add(B).multiplyScalar(.5);m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.normalize());g.add(m);}
+function opening(g,f,a,b,lo,hi,d,kind){
+ const m=kind=='d'?doorM:glassM,h=hi-lo,cy=(lo+hi)/2+.08;let s;
+ if(f=='f'||f=='b'){s=new THREE.Mesh(new THREE.BoxGeometry(b-a,h,.07),m);s.position.set((a+b)/2,cy,f=='f'?0:-d);}
+ else{s=new THREE.Mesh(new THREE.BoxGeometry(.07,h,b-a),m);s.position.set(f=='l'?0:L,cy,-(a+b)/2);}
+ g.add(s);
+ if(kind=='w'){const e=new THREE.LineSegments(new THREE.EdgesGeometry(s.geometry),new THREE.LineBasicMaterial({color:0xdddddd}));e.position.copy(s.position);g.add(e);}}
+
+// pavimento: casca do contêiner + nervuras + aberturas + divisórias + mobiliário
+function level(d,ops,walls,furn,joint){
+ const g=new THREE.Group();
+ bx(g,0,L,0,d,0,HC,shellM);
+ bx(g,T,L-T,T,d-T,0,.08,floorM,false);
+ const p=[];
+ for(let x=.11;x<L-.05;x+=.22){p.push(x,.18,.006,x,HC-.18,.006,x,.18,-d-.006,x,HC-.18,-d-.006);}
+ for(let y=.11;y<d-.05;y+=.22){p.push(-.006,.18,-y,-.006,HC-.18,-y,L+.006,.18,-y,L+.006,HC-.18,-y);}
+ const rg=new THREE.BufferGeometry();rg.setAttribute('position',new THREE.Float32BufferAttribute(p,3));g.add(new THREE.LineSegments(rg,ribM));
+ [0,L-.16].forEach(x=>[0,d-.16].forEach(y=>[0,HC-.16].forEach(h=>bx(g,x,x+.16,y,y+.16,h,h+.16,darkM,false))));
+ if(joint)bx(g,0,L,DD-.012,DD+.012,HC,HC+.006,darkM,false);
+ ops.forEach(o=>opening(g,o[0],o[1],o[2],o[3],o[4],d,o[5]));
+ walls.forEach(w=>w[0]=='h'?bx(g,w[1],w[2],w[3]-.04,w[3]+.04,.08,2.3,wallM):bx(g,w[1]-.04,w[1]+.04,w[2],w[3],.08,2.3,wallM));
+ furn.forEach(f=>bx(g,f[0],f[1],f[2],f[3],.08,.08+f[4],furM));
+ return g;}
+function pillars(g,d){[[.05,.05],[L-.35,.05],[2.9,.05],[.05,d-.35],[L-.35,d-.35],[2.9,d-.35]].forEach(q=>bx(g,q[0],q[0]+.3,q[1],q[1]+.3,0,PIL,furM));}
+function ramp(g,xg,xt,xl){
+ const s=new THREE.Shape();s.moveTo(xg,0);s.lineTo(xt,PIL);s.lineTo(xl,PIL);s.lineTo(xl,0);s.closePath();
+ const m=new THREE.Mesh(new THREE.ExtrudeGeometry(s,{depth:1.2,bevelEnabled:false}),wallM);m.castShadow=m.receiveShadow=true;g.add(m);
+ g.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry),lineM));
+ [.92,.70].forEach(h=>{rod(g,[xg,h,1.2],[xt,PIL+h,1.2]);rod(g,[xt,PIL+h,1.2],[xl,PIL+h,1.2]);rod(g,[xl,PIL+h,1.2],[xl,PIL+h,0]);});
+ [xg,xg+1.2,xg+2.4,xt].forEach(x=>{const z=(x-xg)/(xt-xg)*PIL;rod(g,[x,z,1.2],[x,z+.92,1.2]);});
+ rod(g,[xl,PIL,1.2],[xl,PIL+.92,1.2]);rod(g,[xl,PIL,0],[xl,PIL+.92,0]);}
+
+// ---------- Versão A ----------
+function buildA(){
+ const g=new THREE.Group(),D=2*DD;pillars(g,D);
+ const lv=level(D,[
+  ['f',1.0,2.2,1,2.1,'w'],['f',2.8,4.2,1,2.1,'w'],['f',4.7,5.7,0,2.1,'d'],
+  ['l',.9,1.8,1,2.1,'w'],['r',3.2,4.2,1,2.1,'w'],['b',4.6,5.6,1,2.1,'w'],['b',.3,.8,1.5,2.1,'w']],
+  [['h',.1,.9,DD],['h',1.8,3.0,DD],['h',3.9,L-.1,DD],['v',2.3,DD,D-.1]],
+  [[4.4,5.78,2.9,4.776,.5],[2.34,2.84,3.7,4.7,2],[.1,.9,3.98,4.776,.1],[1.15,1.55,4.35,4.776,.45],[1.7,2.2,4.33,4.776,.85],
+   [.1,2.5,.1,.7,.9],[.1,.75,.7,1.4,1.8],[.1,.75,1.4,2.3,.9],[3.8,4.6,.7,1.5,.75],[5.25,5.95,1.2,2.3,.45]],true);
+ lv.position.y=PIL;g.add(lv);ramp(g,1.1,4.7,5.9);
+ return {g,lv:[lv],d:D,cx:L/2,cz:-D/2};}
+// ---------- Versão B ----------
+function buildB(){
+ const g=new THREE.Group();pillars(g,DD);
+ const shaft=[['h',.1,.3,1.388],['h',1.2,1.5,1.388],['v',1.5,1.388,DD-.1]],lift=[.14,1.46,1.43,2.29,.06];
+ const l0=level(DD,[['f',1.5,2.5,0,2.1,'d'],['f',2.8,3.5,1,2.1,'w'],['f',4.5,5.2,1.5,2.1,'w'],['r',.9,1.4,1.5,2.1,'w'],['b',2.2,3.0,1,2.1,'w']],
+  shaft.concat([['v',3.75,.1,.55],['v',3.75,1.45,DD-.1]]),
+  [lift,[1.6,3.0,1.738,DD-.1,.9],[3.0,3.65,1.738,DD-.1,1.8],[5.15,5.95,1.538,DD-.1,.1],[4.45,4.85,1.9,DD-.1,.45],[3.85,4.35,1.888,DD-.1,.85]]);
+ const l1=level(DD,[['f',1.8,3.0,1,2.1,'w'],['f',4.3,5.5,1,2.1,'w'],['l',.3,1.1,1,2.1,'w'],['r',1.2,2.0,1,2.1,'w']],
+  shaft,[lift,[3.978,5.858,1.058,DD-.1,.5],[1.7,3.5,1.838,DD-.1,2]]);
+ l0.position.y=PIL;l1.position.y=PIL+HC;g.add(l0,l1);ramp(g,-2.3,1.3,2.5);
+ return {g,lv:[l0,l1],d:DD,cx:L/2,cz:-DD/2};}
+
+const A=buildA(),B=buildB();sc.add(A.g,B.g);
+let mode='A',inside=false,ex=false,exNow=0,idle=true;
+const T_={A:['Versão A · contêineres lado a lado','1 pavimento · 6,06 × 4,88 m no terreno · 29,54 m²','Sala/cozinha, quarto e banheiro acessível, todos com giro de Ø 1,50 m.','Acesso por rampa frontal de 3,60 m (8,33%) com patamar de 1,20 m.'],
+ B:['Versão B · contêineres empilhados','2 pavimentos · 6,06 × 2,44 m no terreno · 5,48 m de altura','Térreo: sala/cozinha e banheiro. Superior: quarto/estar.','Rampa no térreo; plataforma elevatória interna liga os pavimentos.'],
+ AB:['Comparação das duas versões','Mesma área construída: 29,54 m²','A ocupa 29,54 m² de terreno; B ocupa 14,77 m², metade.','B precisa de plataforma elevatória e reforço estrutural.']};
+const sph={th:-.65,ph:1.12,r:19},goal={r:19,tx:0,ty:1.3,tz:0},tg=new THREE.Vector3(0,1.3,0);
+function setMode(m){
+ mode=m;const a=m!='B',b=m!='A';A.g.visible=a;B.g.visible=b;
+ if(m=='A'){A.g.position.set(-A.cx,0,-A.cz);goal.ty=1.3;goal.r=17;}
+ if(m=='B'){B.g.position.set(-B.cx,0,-B.cz);goal.ty=2.6;goal.r=19;}
+ if(m=='AB'){A.g.position.set(-8.6,0,-A.cz);B.g.position.set(1.4,0,-B.cz);goal.tx=-2.6;goal.ty=1.8;goal.r=30;}
+ else goal.tx=0;
+ goal.tz=0;
+ document.querySelectorAll('#modes button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.m==m));
+ document.getElementById('tex').disabled=m=='A';
+ const t=T_[m];['t','d1','d2','d3'].forEach((id,i)=>document.getElementById(id).textContent=t[i]);}
+document.querySelectorAll('#modes button').forEach(x=>x.onclick=()=>setMode(x.dataset.m));
+const tin=document.getElementById('tin'),tex=document.getElementById('tex');
+tin.onclick=()=>{inside=!inside;tin.setAttribute('aria-pressed',inside);
+ shellM.opacity=inside?.16:1;shellM.depthWrite=!inside;shellM.needsUpdate=true;};
+tex.onclick=()=>{ex=!ex;tex.setAttribute('aria-pressed',ex);};
+setMode('A');
+
+// controles de câmera (arrastar, roda e pinça)
+const ptr=new Map(),cl=(v,a,b)=>Math.min(b,Math.max(a,v));
+cv.addEventListener('pointerdown',e=>{idle=false;cv.setPointerCapture(e.pointerId);ptr.set(e.pointerId,[e.clientX,e.clientY]);});
+cv.addEventListener('pointermove',e=>{const p=ptr.get(e.pointerId);if(!p)return;
+ if(ptr.size==1){sph.th-=(e.clientX-p[0])*.006;sph.ph=cl(sph.ph-(e.clientY-p[1])*.006,.12,1.52);}
+ else if(ptr.size==2){const o=[...ptr].find(k=>k[0]!=e.pointerId)[1];
+  const d0=Math.hypot(p[0]-o[0],p[1]-o[1]),d1=Math.hypot(e.clientX-o[0],e.clientY-o[1]);goal.r=sph.r=cl(sph.r*d0/Math.max(d1,1),7,50);}
+ ptr.set(e.pointerId,[e.clientX,e.clientY]);});
+['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,e=>ptr.delete(e.pointerId)));
+cv.addEventListener('wheel',e=>{e.preventDefault();idle=false;goal.r=cl(goal.r*Math.exp(e.deltaY*.001),7,50);},{passive:false});
+function size(){const w=innerWidth,h=innerHeight;R_.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();}
+addEventListener('resize',size);size();
+
+(function loop(){
+ requestAnimationFrame(loop);
+ if(idle)sph.th+=.0016;
+ sph.r+=(goal.r-sph.r)*.08;
+ tg.x+=(goal.tx-tg.x)*.08;tg.y+=(goal.ty-tg.y)*.08;tg.z+=(goal.tz-tg.z)*.08;
+ exNow+=((ex?2.6:0)-exNow)*.08;
+ B.lv[1].position.y=PIL+HC+exNow;
+ const k=cam.aspect<.8?1.35:1;
+ cam.position.set(tg.x+sph.r*k*Math.sin(sph.ph)*Math.sin(sph.th),tg.y+sph.r*k*Math.cos(sph.ph),tg.z+sph.r*k*Math.sin(sph.ph)*Math.cos(sph.th));
+ cam.lookAt(tg);R_.render(sc,cam);})();
+</script>
+
+</body></html>
